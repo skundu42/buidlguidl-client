@@ -40,9 +40,13 @@ export function getLatestLogFile(dir, client) {
       logFiles = files.filter(
         (file) => file.startsWith("lighthouse_") && file.endsWith(".log")
       );
+    } else if (client === "nethermind") {
+      logFiles = files.filter(
+        (file) => file.startsWith("nethermind_") && file.endsWith(".log")
+      );
     } else {
       debugToFile(
-        `getLatestLogFile(): Invalid client specified. Must be 'geth', 'reth', 'prysm', or 'lighthouse'.`,
+        `getLatestLogFile(): Invalid client specified. Must be 'geth', 'reth', 'prysm', 'lighthouse', or 'nethermind'.`,
         () => {}
       );
     }
@@ -100,21 +104,6 @@ export function formatLogLines(line) {
     { word: "ERROR", style: "{bold}{red-fg}" },
     { word: "updated", style: "{bold}{yellow-fg}" },
     { word: "latestProcessedSlot", style: "{bold}{green-fg}" },
-    // { word: " backfill:", style: "{bold}{blue-fg}" },
-    // { word: " blockchain:", style: "{bold}{blue-fg}" },
-    // { word: " db:", style: "{bold}{blue-fg}" },
-    // { word: " execution:", style: "{bold}{blue-fg}" },
-    // { word: " flags:", style: "{bold}{blue-fg}" },
-    // { word: " filesystem:", style: "{bold}{blue-fg}" },
-    // { word: " gateway:", style: "{bold}{blue-fg}" },
-    // { word: " genesis:", style: "{bold}{blue-fg}" },
-    // { word: " initial-sync:", style: "{bold}{blue-fg}" },
-    // { word: " node:", style: "{bold}{blue-fg}" },
-    // { word: " p2p:", style: "{bold}{blue-fg}" },
-    // { word: " rpc:", style: "{bold}{blue-fg}" },
-    // { word: " state-gen:", style: "{bold}{blue-fg}" },
-    // { word: " sync:", style: "{bold}{blue-fg}" },
-    // { word: " Syncing:", style: "{bold}{blue-fg}" },
   ];
 
   // Apply styles to the words

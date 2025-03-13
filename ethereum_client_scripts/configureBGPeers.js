@@ -1,10 +1,9 @@
 import fetch from "node-fetch";
 import { getPublicIPAddress } from "../getSystemStats.js";
 import { debugToFile } from "../helpers.js";
-import { executionPeerPort } from "../commandLineOptions.js";
+import { executionPeerPort, consensusClient } from "../commandLineOptions.js";
 import os from "os";
 import { getMacAddress } from "../getSystemStats.js";
-import { consensusClient } from "../commandLineOptions.js";
 
 export async function fetchBGExecutionPeers() {
   try {
@@ -36,47 +35,71 @@ export async function fetchBGExecutionPeers() {
 
 export async function configureBGExecutionPeers(bgPeers) {
   try {
+    const { exec } = await import("child_process");
+
     for (const enode of bgPeers) {
-      const curlCommandAddPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"admin_addPeer","params":["${enode}"]}' http://localhost:8545`;
-      const curlCommandAddTrustedPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"admin_addTrustedPeer","params":["${enode}"]}' http://localhost:8545`;
+      if (consensusClient.toLowerCase() === "nethermind") {
+        // For Nethermind, only use admin_addPeer since admin_addTrustedPeer is not supported.
+        const curlCommandAddPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"admin_addPeer","params":["${enode}"]}' http://localhost:8545`;
 
-      const { exec } = await import("child_process");
+        exec(curlCommandAddPeer, (error, stdout, stderr) => {
+          if (error) {
+            debugToFile(
+              `configureBGExecutionPeers() [Nethermind]: Error executing curl command: ${error}`
+            );
+            return;
+          }
+          if (stderr) {
+            debugToFile(
+              `configureBGExecutionPeers() [Nethermind]: Curl command stderr: ${stderr}`
+            );
+            return;
+          }
+          debugToFile(
+            `configureBGExecutionPeers() [Nethermind]: Curl command stdout: ${stdout}`
+          );
+        });
+      } else {
+        // For other clients (e.g., Geth), add both peer and trusted peer.
+        const curlCommandAddPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"admin_addPeer","params":["${enode}"]}' http://localhost:8545`;
+        const curlCommandAddTrustedPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"admin_addTrustedPeer","params":["${enode}"]}' http://localhost:8545`;
 
-      exec(curlCommandAddPeer, (error, stdout, stderr) => {
-        if (error) {
+        exec(curlCommandAddPeer, (error, stdout, stderr) => {
+          if (error) {
+            debugToFile(
+              `configureBGExecutionPeers() [Geth]: Error executing curl command: ${error}`
+            );
+            return;
+          }
+          if (stderr) {
+            debugToFile(
+              `configureBGExecutionPeers() [Geth]: Curl command stderr: ${stderr}`
+            );
+            return;
+          }
           debugToFile(
-            `configureBGExecutionPeers(): AddPeer: Error executing curl command: ${error}`
+            `configureBGExecutionPeers() [Geth]: Curl command stdout: ${stdout}`
           );
-          return;
-        }
-        if (stderr) {
-          debugToFile(
-            `configureBGExecutionPeers(): AddPeer: Curl command stderr: ${stderr}`
-          );
-          return;
-        }
-        debugToFile(
-          `configureBGExecutionPeers(): AddPeer: Curl command stdout: ${stdout}`
-        );
-      });
+        });
 
-      exec(curlCommandAddTrustedPeer, (error, stdout, stderr) => {
-        if (error) {
+        exec(curlCommandAddTrustedPeer, (error, stdout, stderr) => {
+          if (error) {
+            debugToFile(
+              `configureBGExecutionPeers() [Geth]: Error executing curl command for trusted peer: ${error}`
+            );
+            return;
+          }
+          if (stderr) {
+            debugToFile(
+              `configureBGExecutionPeers() [Geth]: Curl command stderr for trusted peer: ${stderr}`
+            );
+            return;
+          }
           debugToFile(
-            `configureBGExecutionPeers(): AddTrustedPeer: Error executing curl command: ${error}`
+            `configureBGExecutionPeers() [Geth]: Curl command stdout for trusted peer: ${stdout}`
           );
-          return;
-        }
-        if (stderr) {
-          debugToFile(
-            `configureBGExecutionPeers(): AddTrustedPeer: Curl command stderr: ${stderr}`
-          );
-          return;
-        }
-        debugToFile(
-          `configureBGExecutionPeers(): AddTrustedPeer: Curl command stdout: ${stdout}`
-        );
-      });
+        });
+      }
     }
   } catch (error) {
     debugToFile(
@@ -123,9 +146,13 @@ export async function configureBGConsensusPeers() {
 
     const result = peerAddresses.join(",");
 
-    // debugToFile(
-    //   `configureBGConsensusPeers(): Filtered peer addresses:\n${result}`
-    // );
+    // For Nethermind, if additional consensus peer configuration via JSON-RPC is needed,
+    // add the corresponding method call here.
+    // For example:
+    // if (consensusClient.toLowerCase() === "nethermind") {
+    //   const curlCommandConsensusPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"nethermind_addConsensusPeer","params":["${result}"]}' http://localhost:8545`;
+    //   // Execute this command similarly to the execution peers above.
+    // }
 
     return result;
   } catch (error) {
