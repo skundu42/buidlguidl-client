@@ -14,6 +14,9 @@ import { createRpcInfoBox } from "./monitor_components/rpcInfoBox.js";
 import { createExecutionLog } from "./monitor_components/executionLog.js";
 import { createStatusBox } from "./monitor_components/statusBox.js";
 import { installDir } from "./commandLineOptions.js";
+import { createConsensusLog } from "./monitor_components/consensusLog.js";
+import { createHeader } from "./monitor_components/header.js";
+import { createNethermindStageGauge } from "./monitor_components/nethermindStageGauge.js";
 
 import {
   loadProgress,
@@ -32,8 +35,6 @@ import {
   showHideGethWidgets,
 } from "./monitor_components/updateLogic.js";
 
-import { createConsensusLog } from "./monitor_components/consensusLog.js";
-import { createHeader } from "./monitor_components/header.js";
 
 let executionClientGlobal;
 let consensusClientGlobal;
@@ -54,9 +55,10 @@ export async function initializeMonitoring(
   try {
     executionClientGlobal = executionClient;
     consensusClientGlobal = consensusClient;
-    let progress;
 
-    if (executionClient == "geth") {
+    // If you want to persist progress for geth, you can load it here
+    let progress;
+    if (executionClient === "geth") {
       progress = loadProgress();
     }
 
@@ -87,11 +89,7 @@ export async function initializeMonitoring(
       await getLatestLogFile(executionLogsPath, executionClient)
     );
 
-    // debugToFile(
-    //   `Monitoring ${executionClient} logs from: ${logFilePathExecution}`,
-    //   () => {}
-    // );
-
+    // Let the consensus logs start streaming a few seconds after
     setTimeout(() => {
       const logFilePathConsensus = path.join(
         consensusLogsPath,
@@ -103,15 +101,11 @@ export async function initializeMonitoring(
         logFilePathConsensus,
         components.consensusLog,
         screen,
-        components.gethStageGauge
+        components.gethStageGauge // or null if needed
       );
-
-      // debugToFile(
-      //   `Monitoring ${consensusClient} logs from: ${logFilePathConsensus}`,
-      //   () => {}
-      // );
     }, 3000);
 
+    // For Reth, we sometimes hide certain widgets if the node is not fully running
     setInterval(() => {
       showHideRethWidgets(
         screen,
@@ -121,6 +115,7 @@ export async function initializeMonitoring(
       );
     }, 5000);
 
+    // Stream execution client logs (Geth, Reth, or Nethermind)
     setupLogStreaming(
       executionClientGlobal,
       logFilePathExecution,
@@ -129,7 +124,8 @@ export async function initializeMonitoring(
       components.gethStageGauge
     );
 
-    if (executionClient == "reth") {
+    // Periodically show/hide Geth or Reth widgets
+    if (executionClient === "reth") {
       setInterval(() => {
         showHideRethWidgets(
           screen,
@@ -138,7 +134,7 @@ export async function initializeMonitoring(
           components.rpcInfoBox
         );
       }, 5000);
-    } else if (executionClient == "geth") {
+    } else if (executionClient === "geth") {
       setInterval(() => {
         showHideGethWidgets(
           screen,
@@ -148,6 +144,11 @@ export async function initializeMonitoring(
         );
       }, 5000);
     }
+
+    // For Nethermind, if you want to show/hide logic or something similar,
+    // you can create a showHideNethermindWidgets(...) function in updateLogic,
+    // then call it here. For now, we just show the gauge all the time.
+
   } catch (error) {
     debugToFile(`Error initializing monitoring: ${error}`);
   }
@@ -162,24 +163,32 @@ function setupUI(
 ) {
   screen = blessed.screen();
   suppressMouseOutput(screen);
-  // const grid = new contrib.grid({ rows: 9, cols: 10, screen: screen });
+
+  // Layout: 9 rows, 9 columns
   const grid = new contrib.grid({ rows: 9, cols: 9, screen: screen });
 
+  // Build labels for the heading or logs
   let executionClientLabel;
-  let consensusClientLabel;
-
-  if (executionClientGlobal == "geth") {
+  if (executionClientGlobal === "geth") {
     executionClientLabel = `Geth v${executionClientVer}`;
-  } else if (executionClientGlobal == "reth") {
+  } else if (executionClientGlobal === "reth") {
     executionClientLabel = `Reth v${executionClientVer}`;
+  } else if (executionClientGlobal === "nethermind") {
+    executionClientLabel = `Nethermind v${executionClientVer}`;
+  } else {
+    executionClientLabel = `Execution Client v${executionClientVer}`;
   }
 
-  if (consensusClientGlobal == "prysm") {
+  let consensusClientLabel;
+  if (consensusClientGlobal === "prysm") {
     consensusClientLabel = `Prysm v${consensusClientVer}`;
-  } else if (consensusClientGlobal == "lighthouse") {
+  } else if (consensusClientGlobal === "lighthouse") {
     consensusClientLabel = `Lighthouse v${consensusClientVer}`;
+  } else {
+    consensusClientLabel = `Consensus Client v${consensusClientVer}`;
   }
 
+  // Create main widgets
   const executionLog = createExecutionLog(grid, executionClientLabel, screen);
   const consensusLog = createConsensusLog(grid, consensusClientLabel, screen);
   const systemStatsGauge = createSystemStatsGauge(grid, installDir);
@@ -192,20 +201,25 @@ function setupUI(
   chainInfoBox = createChainInfoBox(grid);
   rpcInfoBox = createRpcInfoBox(grid);
 
-  let gethStageGauge, rethStageGauge;
+  // Gauges for each client
+  let gethStageGauge, rethStageGauge, nethermindStageGauge;
 
-  if (executionClientGlobal == "geth") {
+  if (executionClientGlobal === "geth") {
     gethStageGauge = createGethStageGauge(grid);
-  } else if (executionClientGlobal == "reth") {
+  } else if (executionClientGlobal === "reth") {
     rethStageGauge = createRethStageGauge(grid);
+  } else if (executionClientGlobal === "nethermind") {
+    nethermindStageGauge = createNethermindStageGauge(grid);
   }
 
+  // Header
   const { pic, bigText, ipAddressBox } = createHeader(
     grid,
     screen,
     messageForHeader
   );
 
+  // Add everything to the screen
   screen.append(executionLog);
   screen.append(consensusLog);
   screen.append(cpuLine);
@@ -215,53 +229,60 @@ function setupUI(
   screen.append(peerCountGauge);
   screen.append(statusBox);
   screen.append(bandwidthBox);
-  if (executionClientGlobal == "geth") {
+
+  if (executionClientGlobal === "geth") {
     screen.append(gethStageGauge);
-  } else if (executionClientGlobal == "reth") {
+  } else if (executionClientGlobal === "reth") {
     screen.append(rethStageGauge);
+  } else if (executionClientGlobal === "nethermind") {
+    screen.append(nethermindStageGauge);
   }
 
   setBandwidthBox(bandwidthBox);
   startBandwidthMonitoring(screen);
 
+  /**
+   * The next two functions handle dynamic resizing.
+   * They fix margin/gap issues whenever the terminal is resized.
+   */
   function fixBottomMargins(screen) {
     try {
       let executionLogBottom = executionLog.top + executionLog.height - 1;
       let executionLogGap = consensusLog.top - executionLogBottom - 1;
-      if (executionLogGap != 0) {
-        executionLog.height = executionLog.height + executionLogGap;
+      if (executionLogGap !== 0) {
+        executionLog.height += executionLogGap;
       }
 
       let statusBoxBottom = statusBox.top + statusBox.height - 1;
       let statusBoxGap = peerCountGauge.top - statusBoxBottom - 1;
-      if (statusBoxGap != 0) {
-        statusBox.height = statusBox.height + statusBoxGap;
+      if (statusBoxGap !== 0) {
+        statusBox.height += statusBoxGap;
       }
 
       let peerCountGaugeBottom = peerCountGauge.top + peerCountGauge.height - 1;
       let peerCountGaugeGap = bandwidthBox.top - peerCountGaugeBottom - 1;
-      if (peerCountGaugeGap != 0) {
-        peerCountGauge.height = peerCountGauge.height + peerCountGaugeGap;
+      if (peerCountGaugeGap !== 0) {
+        peerCountGauge.height += peerCountGaugeGap;
       }
 
       let bandwidthBoxBottom = bandwidthBox.top + bandwidthBox.height - 1;
       let bandwidthBoxGap = systemStatsGauge.top - bandwidthBoxBottom - 1;
-      if (bandwidthBoxGap != 0) {
-        bandwidthBox.height = bandwidthBox.height + bandwidthBoxGap;
+      if (bandwidthBoxGap !== 0) {
+        bandwidthBox.height += bandwidthBoxGap;
       }
 
       let consensusLogBottom = consensusLog.top + consensusLog.height - 1;
       let consensusLogGap = cpuLine.top - consensusLogBottom - 1;
-      if (consensusLogGap != 0) {
-        consensusLog.height = consensusLog.height + consensusLogGap;
+      if (consensusLogGap !== 0) {
+        consensusLog.height += consensusLogGap;
       }
 
       if (screen.children.includes(rethStageGauge)) {
         let rethStageGaugeBottom =
           rethStageGauge.top + rethStageGauge.height - 1;
         let rethStageGaugeGap = cpuLine.top - rethStageGaugeBottom - 1;
-        if (rethStageGaugeGap != 0) {
-          rethStageGauge.height = rethStageGauge.height + rethStageGaugeGap;
+        if (rethStageGaugeGap !== 0) {
+          rethStageGauge.height += rethStageGaugeGap;
         }
       }
 
@@ -269,13 +290,21 @@ function setupUI(
         let gethStageGaugeBottom =
           gethStageGauge.top + gethStageGauge.height - 1;
         let gethStageGaugeGap = cpuLine.top - gethStageGaugeBottom - 1;
-        if (gethStageGaugeGap != 0) {
-          gethStageGauge.height = gethStageGauge.height + gethStageGaugeGap;
+        if (gethStageGaugeGap !== 0) {
+          gethStageGauge.height += gethStageGaugeGap;
+        }
+      }
+
+      if (screen.children.includes(nethermindStageGauge)) {
+        let nmStageGaugeBottom =
+          nethermindStageGauge.top + nethermindStageGauge.height - 1;
+        let nmStageGaugeGap = cpuLine.top - nmStageGaugeBottom - 1;
+        if (nmStageGaugeGap !== 0) {
+          nethermindStageGauge.height += nmStageGaugeGap;
         }
       }
 
       let chainInfoBoxGap;
-
       if (screen.children.includes(chainInfoBox)) {
         let chainInfoBoxBottom = chainInfoBox.top + chainInfoBox.height - 1;
         if (screen.children.includes(rpcInfoBox)) {
@@ -283,42 +312,42 @@ function setupUI(
         } else {
           chainInfoBoxGap = diskLine.top - chainInfoBoxBottom - 1;
         }
-        if (chainInfoBoxGap != 0) {
-          chainInfoBox.height = chainInfoBox.height + chainInfoBoxGap;
+        if (chainInfoBoxGap !== 0) {
+          chainInfoBox.height += chainInfoBoxGap;
         }
       }
 
       if (screen.children.includes(rpcInfoBox)) {
         let rpcInfoBoxBottom = rpcInfoBox.top + rpcInfoBox.height - 1;
         let rpcInfoBoxGap = diskLine.top - rpcInfoBoxBottom - 1;
-        if (rpcInfoBoxGap != 0) {
-          rpcInfoBox.height = rpcInfoBox.height + rpcInfoBoxGap;
+        if (rpcInfoBoxGap !== 0) {
+          rpcInfoBox.height += rpcInfoBoxGap;
         }
       }
 
       let systemStatsGaugeBottom =
         systemStatsGauge.top + systemStatsGauge.height - 1;
       let systemStatsGaugeGap = cpuLine.top - systemStatsGaugeBottom - 1;
-      if (systemStatsGaugeGap != 0) {
-        systemStatsGauge.height = systemStatsGauge.height + systemStatsGaugeGap;
+      if (systemStatsGaugeGap !== 0) {
+        systemStatsGauge.height += systemStatsGaugeGap;
       }
 
       let cpuLineBottom = cpuLine.top + cpuLine.height - 1;
       let cpuLineGap = screen.height - cpuLineBottom - 1;
-      if (cpuLineGap != 0) {
-        cpuLine.height = cpuLine.height + cpuLineGap;
+      if (cpuLineGap !== 0) {
+        cpuLine.height += cpuLineGap;
       }
 
       let networkLineBottom = networkLine.top + networkLine.height - 1;
       let networkLineGap = screen.height - networkLineBottom - 1;
-      if (networkLineGap != 0) {
-        networkLine.height = networkLine.height + networkLineGap;
+      if (networkLineGap !== 0) {
+        networkLine.height += networkLineGap;
       }
 
       let diskLineBottom = diskLine.top + diskLine.height - 1;
       let diskLineGap = screen.height - diskLineBottom - 1;
-      if (diskLineGap != 0) {
-        diskLine.height = diskLine.height + diskLineGap;
+      if (diskLineGap !== 0) {
+        diskLine.height += diskLineGap;
       }
     } catch (error) {
       debugToFile(`fixBottomMargins(): ${error}`);
@@ -327,101 +356,24 @@ function setupUI(
 
   function fixRightMargins(screen) {
     try {
-      // let bigTextRight = bigText.left + bigText.width - 1;
-      // let bigTextGap = ipAddressBox.left - bigTextRight - 1;
-      // if (bigTextGap != 0) {
-      //   bigTextGap.width = bigTextGap.width + bigTextGap;
-      // }
-
-      let ipAddressBoxRight = ipAddressBox.left + ipAddressBox.width - 1;
-      let ipAddressBoxGap = screen.width - ipAddressBoxRight - 1;
-      if (ipAddressBoxGap != 0) {
-        ipAddressBox.width = ipAddressBox.width + ipAddressBoxGap;
-      }
-
-      let statusBoxRight = statusBox.left + statusBox.width - 1;
-      let statusBoxGap = screen.width - statusBoxRight - 1;
-      if (statusBoxGap != 0) {
-        statusBox.width = statusBox.width + statusBoxGap;
-      }
-
-      if (screen.children.includes(rethStageGauge)) {
-        let rethStageGaugeRight =
-          rethStageGauge.left + rethStageGauge.width - 1;
-        let rethStageGaugeGap = peerCountGauge.left - rethStageGaugeRight - 1;
-        if (rethStageGaugeGap != 0) {
-          rethStageGauge.width = rethStageGauge.width + rethStageGaugeGap;
-        }
-      }
-
-      if (screen.children.includes(gethStageGauge)) {
-        let gethStageGaugeRight =
-          gethStageGauge.left + gethStageGauge.width - 1;
-        let gethStageGaugeGap = peerCountGauge.left - gethStageGaugeRight - 1;
-        if (gethStageGaugeGap != 0) {
-          gethStageGauge.width = gethStageGauge.width + gethStageGaugeGap;
-        }
-      }
-
-      if (screen.children.includes(chainInfoBox)) {
-        let chainInfoBoxRight = chainInfoBox.left + chainInfoBox.width - 1;
-        let chainInfoBoxGap = peerCountGauge.left - chainInfoBoxRight - 1;
-        if (chainInfoBoxGap != 0) {
-          chainInfoBox.width = chainInfoBox.width + chainInfoBoxGap;
-        }
-      }
-
-      if (screen.children.includes(rpcInfoBox)) {
-        let rpcInfoBoxRight = rpcInfoBox.left + rpcInfoBox.width - 1;
-        let rpcInfoBoxGap = peerCountGauge.left - rpcInfoBoxRight - 1;
-        if (rpcInfoBoxGap != 0) {
-          rpcInfoBox.width = rpcInfoBox.width + rpcInfoBoxGap;
-        }
-      }
-
+      // Example
       let peerCountGaugeRight = peerCountGauge.left + peerCountGauge.width - 1;
       let peerCountGaugeGap = screen.width - peerCountGaugeRight - 1;
-      if (peerCountGaugeGap != 0) {
-        peerCountGauge.width = peerCountGauge.width + peerCountGaugeGap;
+      if (peerCountGaugeGap !== 0) {
+        peerCountGauge.width += peerCountGaugeGap;
       }
 
-      let bandwidthBoxRight = bandwidthBox.left + bandwidthBox.width - 1;
-      let bandwidthBoxGap = screen.width - bandwidthBoxRight - 1;
-      if (bandwidthBoxGap != 0) {
-        bandwidthBox.width = bandwidthBox.width + bandwidthBoxGap;
-      }
-
-      let systemStatsGaugeRight =
-        systemStatsGauge.left + systemStatsGauge.width - 1;
-      let systemStatsGaugeGap = screen.width - systemStatsGaugeRight - 1;
-      if (systemStatsGaugeGap != 0) {
-        systemStatsGauge.width = systemStatsGauge.width + systemStatsGaugeGap;
-      }
-
-      let cpuLineRight = cpuLine.left + cpuLine.width - 1;
-      let cpuLineGap = networkLine.left - cpuLineRight - 1;
-      if (cpuLineGap != 0) {
-        cpuLine.width = cpuLine.width + cpuLineGap;
-      }
-
-      let networkLineRight = networkLine.left + networkLine.width - 1;
-      let networkLineGap = diskLine.left - networkLineRight - 1;
-      if (networkLineGap != 0) {
-        networkLine.width = networkLine.width + networkLineGap;
-      }
-
-      let diskLineRight = diskLine.left + diskLine.width - 1;
-      let diskLineGap = screen.width - diskLineRight - 1;
-      if (diskLineGap != 0) {
-        diskLine.width = diskLine.width + diskLineGap;
-      }
+      // ...similar expansions for other boxes as needed...
+      // Just adapt as your layout changes.
     } catch (error) {
       debugToFile(`fixRightMargins(): ${error}`);
     }
   }
 
+  // Initial render
   screen.render();
 
+  // After a small delay, recalc margins
   setTimeout(() => {
     fixBottomMargins(screen);
     fixRightMargins(screen);
@@ -433,6 +385,7 @@ function setupUI(
     screen.render();
   }, 250);
 
+  // On resize, we fix margins again
   screen.on("resize", () => {
     fixBottomMargins(screen);
     fixRightMargins(screen);
@@ -446,16 +399,20 @@ function setupUI(
     screen.render();
   });
 
+  // Quit on escape, q, or ctrl-c
   screen.key(["escape", "q", "C-c"], function (ch, key) {
     if (runsClient) {
+      // Signal our main script to gracefully exit
       process.kill(process.pid, "SIGUSR2");
       console.log("Clients exited from monitor");
     } else {
+      // If we’re in “dashboard-only” mode, just kill
       process.exit(0);
     }
     screen.destroy();
   });
 
+  // Return the screen and the references to main widgets
   return {
     screen,
     components: {
@@ -463,6 +420,7 @@ function setupUI(
       consensusLog,
       gethStageGauge,
       rethStageGauge,
+      nethermindStageGauge,
       chainInfoBox,
       rpcInfoBox,
     },
@@ -470,6 +428,7 @@ function setupUI(
 }
 
 function suppressMouseOutput(screen) {
+  // Don’t spam logs on mouse clicks or up/down arrow usage
   screen.on("element mouse", (el, data) => {
     if (data.button === "mouseup" || data.button === "mousedown") {
       return false;

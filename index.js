@@ -5,7 +5,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 import { initializeMonitoring } from "./monitor.js";
-import { installMacLinuxClient } from "./ethereum_client_scripts/install.js";
+import {
+  installMacLinuxClient,
+  getVersionNumber,
+  compareClientVersions,
+  removeClient,
+} from "./ethereum_client_scripts/install.js";
 import { initializeWebSocketConnection } from "./web_socket_connection/webSocketConnection.js";
 import {
   executionClient,
@@ -25,7 +30,6 @@ import {
   fetchBGConsensusPeers,
   configureBGConsensusPeers,
 } from "./ethereum_client_scripts/configureBGPeers.js";
-import { getVersionNumber } from "./ethereum_client_scripts/install.js";
 import { debugToFile } from "./helpers.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,32 +37,22 @@ const __dirname = dirname(__filename);
 
 const lockFilePath = path.join(installDir, "ethereum_clients", "script.lock");
 
-// const CONFIG = {
-//   debugLogPath: path.join(installDir, "ethereum_clients", "debugIndex.log"),
-// };
-
-function createJwtSecret(jwtDir) {
-  if (!fs.existsSync(jwtDir)) {
-    console.log(`\nCreating '${jwtDir}'`);
-    fs.mkdirSync(jwtDir, { recursive: true });
-  }
-
-  if (!fs.existsSync(`${jwtDir}/jwt.hex`)) {
-    console.log("Generating JWT.hex file.");
-    execSync(`cd "${jwtDir}" && openssl rand -hex 32 > jwt.hex`, {
-      stdio: "inherit",
-    });
-  }
-}
-
+// Track child processes and their exit states
 let executionChild;
 let consensusChild;
-
 let executionExited = false;
 let consensusExited = false;
 
+// Flag to prevent multiple exit sequences
 let isExiting = false;
 
+/**
+ * Gracefully handle process exit:
+ * - Checks the lockfile to ensure this is the primary instance of the script
+ * - Terminates child processes
+ * - Removes lockfile
+ * - Exits process
+ */
 function handleExit(exitType) {
   if (isExiting) return; // Prevent multiple calls
 
@@ -80,6 +74,7 @@ function handleExit(exitType) {
 
   console.log(`\n\n🛰️  Received exit signal: ${exitType}\n`);
 
+  // Remove the command line options file
   deleteOptionsFile();
   debugToFile(`handleExit(): deleteOptionsFile() has been called`);
 
@@ -159,7 +154,7 @@ function handleExit(exitType) {
       }, 750);
     }
 
-    // Initial check in case both children are already not running
+    // Initial check in case both children have already stopped
     checkExit();
 
     // Periodically check if both child processes have exited
@@ -175,139 +170,45 @@ function handleExit(exitType) {
   }
 }
 
-// Modify existing listeners
+// Signal and error handlers
 process.on("SIGINT", () => handleExit("SIGINT"));
 process.on("SIGTERM", () => handleExit("SIGTERM"));
 process.on("SIGHUP", () => handleExit("SIGHUP"));
 process.on("SIGUSR2", () => handleExit("SIGUSR2"));
 
-// Modify the exit listener
+// Handle normal exit
 process.on("exit", (code) => {
   if (!isExiting) {
     handleExit("exit");
   }
 });
 
-// This helps catch uncaught exceptions
+// Uncaught exception handler
 process.on("uncaughtException", (error) => {
   console.error("Uncaught Exception:", error);
   handleExit("uncaughtException");
 });
 
-// This helps catch unhandled promise rejections
+// Unhandled promise rejection handler
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
   handleExit("unhandledRejection");
 });
 
-let bgConsensusPeers = [];
-let bgConsensusAddrs;
-
-async function startClient(clientName, executionType, installDir) {
-  let clientCommand,
-    clientArgs = [];
-
-  if (clientName === "geth") {
-    clientArgs.push("--executionpeerport", executionPeerPort);
-    clientArgs.push("--executiontype", executionType);
-    clientCommand = path.join(__dirname, "ethereum_client_scripts/geth.js");
-  } else if (clientName === "reth") {
-    clientArgs.push("--executionpeerport", executionPeerPort);
-    clientArgs.push("--executiontype", executionType);
-    clientCommand = path.join(__dirname, "ethereum_client_scripts/reth.js");
-  } else if (clientName === "prysm") {
-    bgConsensusPeers = await fetchBGConsensusPeers();
-    bgConsensusAddrs = await configureBGConsensusPeers(consensusClient);
-
-    if (bgConsensusPeers.length > 0) {
-      clientArgs.push("--bgconsensuspeers", bgConsensusPeers);
-    }
-
-    if (bgConsensusAddrs != null) {
-      clientArgs.push("--bgconsensusaddrs", bgConsensusAddrs);
-    }
-
-    if (consensusCheckpoint != null) {
-      clientArgs.push("--consensuscheckpoint", consensusCheckpoint);
-    }
-
-    clientArgs.push("--consensuspeerports", consensusPeerPorts);
-
-    clientCommand = path.join(__dirname, "ethereum_client_scripts/prysm.js");
-  } else if (clientName === "lighthouse") {
-    bgConsensusPeers = await fetchBGConsensusPeers();
-    bgConsensusAddrs = await configureBGConsensusPeers(consensusClient);
-
-    if (bgConsensusPeers.length > 0) {
-      clientArgs.push("--bgconsensuspeers", bgConsensusPeers);
-    }
-
-    if (bgConsensusAddrs != null) {
-      clientArgs.push("--bgconsensusaddrs", bgConsensusAddrs);
-    }
-
-    if (consensusCheckpoint != null) {
-      clientArgs.push("--consensuscheckpoint", consensusCheckpoint);
-    }
-    clientArgs.push("--consensuspeerports", consensusPeerPorts);
-
-    clientCommand = path.join(
-      __dirname,
-      "ethereum_client_scripts/lighthouse.js"
-    );
-  } else {
-    clientCommand = path.join(
-      installDir,
-      "ethereum_clients",
-      clientName,
-      clientName
-    );
-  }
-
-  clientArgs.push("--directory", installDir);
-
-  const child = spawn("node", [clientCommand, ...clientArgs], {
-    stdio: ["inherit", "pipe", "inherit"],
-    cwd: process.env.HOME,
-    env: { ...process.env, INSTALL_DIR: installDir },
-  });
-
-  if (clientName === "geth" || clientName === "reth") {
-    executionChild = child;
-  } else if (clientName === "prysm" || clientName === "lighthouse") {
-    consensusChild = child;
-  }
-
-  child.on("exit", (code) => {
-    console.log(`🫡 ${clientName} process exited with code ${code}`);
-    if (clientName === "geth" || clientName === "reth") {
-      executionExited = true;
-    } else if (clientName === "prysm" || clientName === "lighthouse") {
-      consensusExited = true;
-    }
-  });
-
-  child.on("error", (err) => {
-    console.log(`Error from start client: ${err.message}`);
-  });
-
-  console.log(clientName, "started");
-
-  child.stdout.on("error", (err) => {
-    console.error(`Error on stdout of ${clientName}: ${err.message}`);
-  });
-}
-
+/**
+ * Check if an instance is already running (by checking the lockfile).
+ * If lockfile exists, kill(0) is used to check if that PID is still active.
+ */
 function isAlreadyRunning() {
   try {
     if (fs.existsSync(lockFilePath)) {
       const pid = fs.readFileSync(lockFilePath, "utf8");
       try {
-        process.kill(pid, 0);
+        process.kill(pid, 0); // throws if process not found
         return true;
       } catch (e) {
         if (e.code === "ESRCH") {
-          fs.unlinkSync(lockFilePath);
+          fs.unlinkSync(lockFilePath); // stale lock
           return false;
         }
         throw e;
@@ -320,66 +221,210 @@ function isAlreadyRunning() {
   }
 }
 
+/** Create the lock file with the current PID. */
 function createLockFile() {
   fs.writeFileSync(lockFilePath, process.pid.toString(), "utf8");
-  // console.log(process.pid.toString())
 }
 
+/** Remove the lock file. */
 function removeLockFile() {
   if (fs.existsSync(lockFilePath)) {
     fs.unlinkSync(lockFilePath);
   }
 }
 
-const jwtDir = path.join(installDir, "ethereum_clients", "jwt");
-const platform = os.platform();
+/**
+ * Create the JWT secret file if needed (for clients that require JWT auth).
+ */
+function createJwtSecret(jwtDir) {
+  if (!fs.existsSync(jwtDir)) {
+    console.log(`\nCreating '${jwtDir}'`);
+    fs.mkdirSync(jwtDir, { recursive: true });
+  }
+  if (!fs.existsSync(`${jwtDir}/jwt.hex`)) {
+    console.log("Generating JWT.hex file.");
+    execSync(`cd "${jwtDir}" && openssl rand -hex 32 > jwt.hex`, {
+      stdio: "inherit",
+    });
+  }
+}
 
+/**
+ * Start an Ethereum client (execution or consensus) via child_process.spawn.
+ * @param {string} clientName - Name of the client (e.g., "geth", "lighthouse").
+ * @param {string} executionType - Node type (e.g., "pruned", "archive").
+ * @param {string} installDir - Base installation directory.
+ */
+async function startClient(clientName, executionType, installDir) {
+  let clientCommand, clientArgs = [];
+
+  if (clientName === "geth") {
+    clientArgs.push("--executionpeerport", executionPeerPort);
+    clientArgs.push("--executiontype", executionType);
+    clientCommand = path.join(__dirname, "ethereum_client_scripts/geth.js");
+  } else if (clientName === "reth") {
+    clientArgs.push("--executionpeerport", executionPeerPort);
+    clientArgs.push("--executiontype", executionType);
+    clientCommand = path.join(__dirname, "ethereum_client_scripts/reth.js");
+  } else if (clientName === "nethermind") {
+    clientCommand = path.join(__dirname, "ethereum_client_scripts/nethermind.js");
+    clientArgs.push("--executionpeerport", executionPeerPort);
+    clientArgs.push("--executiontype", executionType);
+  } else if (clientName === "prysm") {
+    // fetch & configure bootnode addresses for consensus
+    const bgConsensusPeers = await fetchBGConsensusPeers();
+    const bgConsensusAddrs = await configureBGConsensusPeers(consensusClient);
+
+    if (bgConsensusPeers.length > 0) {
+      clientArgs.push("--bgconsensuspeers", bgConsensusPeers);
+    }
+    if (bgConsensusAddrs != null) {
+      clientArgs.push("--bgconsensusaddrs", bgConsensusAddrs);
+    }
+    if (consensusCheckpoint != null) {
+      clientArgs.push("--consensuscheckpoint", consensusCheckpoint);
+    }
+    clientArgs.push("--consensuspeerports", consensusPeerPorts);
+
+    clientCommand = path.join(__dirname, "ethereum_client_scripts/prysm.js");
+  } else if (clientName === "lighthouse") {
+    // fetch & configure bootnode addresses for consensus
+    const bgConsensusPeers = await fetchBGConsensusPeers();
+    const bgConsensusAddrs = await configureBGConsensusPeers(consensusClient);
+
+    if (bgConsensusPeers.length > 0) {
+      clientArgs.push("--bgconsensuspeers", bgConsensusPeers);
+    }
+    if (bgConsensusAddrs != null) {
+      clientArgs.push("--bgconsensusaddrs", bgConsensusAddrs);
+    }
+    if (consensusCheckpoint != null) {
+      clientArgs.push("--consensuscheckpoint", consensusCheckpoint);
+    }
+    clientArgs.push("--consensuspeerports", consensusPeerPorts);
+
+    clientCommand = path.join(__dirname, "ethereum_client_scripts/lighthouse.js");
+  } else {
+    // fallback: direct path to the client
+    clientCommand = path.join(
+      installDir,
+      "ethereum_clients",
+      clientName,
+      clientName
+    );
+  }
+
+  // Common argument for the installation directory
+  clientArgs.push("--directory", installDir);
+
+  // Spawn the process
+  const child = spawn("node", [clientCommand, ...clientArgs], {
+    stdio: ["inherit", "pipe", "inherit"],
+    cwd: process.env.HOME,
+    env: { ...process.env, INSTALL_DIR: installDir },
+  });
+
+  if (["geth", "reth", "nethermind"].includes(clientName)) {
+    executionChild = child;
+  } else {
+    consensusChild = child;
+  }
+
+  child.on("exit", (code) => {
+    console.log(`🫡 ${clientName} process exited with code ${code}`);
+    if (["geth", "reth", "nethermind"].includes(clientName)) {
+      executionExited = true;
+    } else {
+      consensusExited = true;
+    }
+  });
+
+  child.on("error", (err) => {
+    console.log(`Error from ${clientName} process: ${err.message}`);
+  });
+
+  console.log(`${clientName} started`);
+
+  child.stdout.on("error", (err) => {
+    console.error(`Error on stdout of ${clientName}: ${err.message}`);
+  });
+}
+
+// ----- Main script flow -----
+
+// Prepare the JWT directory for certain clients (Lighthouse, Nethermind, etc.)
+const jwtDir = path.join(installDir, "ethereum_clients", "jwt");
+createJwtSecret(jwtDir);
+
+// Attempt to install or update the clients on Mac or Linux
+const platform = os.platform();
 if (["darwin", "linux"].includes(platform)) {
   installMacLinuxClient(executionClient, platform);
   installMacLinuxClient(consensusClient, platform);
+  // Always ensure Nethermind is available
+  installMacLinuxClient("nethermind", platform);
 }
-// } else if (platform === "win32") {
-//   installWindowsExecutionClient(executionClient);
-//   installWindowsConsensusClient(consensusClient);
-// }
 
-let messageForHeader = "";
-let runsClient = false;
-
-createJwtSecret(jwtDir);
-
+// Retrieve version info
 const executionClientVer = getVersionNumber(executionClient);
 const consensusClientVer = getVersionNumber(consensusClient);
+const nethermindClientVer = getVersionNumber("nethermind");
 
+// Check if Nethermind is up to date
+const [isNethermindLatest, latestNethermindVer] = compareClientVersions(
+  "nethermind",
+  nethermindClientVer
+);
+if (!isNethermindLatest) {
+  console.log(
+    `Nethermind version ${nethermindClientVer} is not the latest (${latestNethermindVer}). Consider updating.`
+  );
+}
+
+// Config for websockets, used if there's a dashboard or interactive interface
 const wsConfig = {
   executionClient: executionClient,
   consensusClient: consensusClient,
   executionClientVer: executionClientVer,
   consensusClientVer: consensusClientVer,
+  nethermindClientVer: nethermindClientVer,
 };
 
+// We might show a different header message if the client is already running
+let messageForHeader = "";
+// Track whether we actually started new clients or are just in "dashboard view"
+let runsClient = false;
+
 if (!isAlreadyRunning()) {
-  deleteOptionsFile();
+  // If no instance is running, set up the lock
+  deleteOptionsFile(); // remove any stale options
   createLockFile();
 
+  // Start the requested execution client
   await startClient(executionClient, executionType, installDir);
+  // Start the requested consensus client
   await startClient(consensusClient, executionType, installDir);
 
+  // If there's an "owner" (like a user or front-end session), initialize WS
   if (owner !== null) {
     initializeWebSocketConnection(wsConfig);
   }
 
   runsClient = true;
+  // Save the current command line options to a file for reference
   saveOptionsToFile();
 } else {
+  // Another instance is already running, so let's just show "dashboard" mode
   messageForHeader = "Dashboard View (client already running)";
   runsClient = false;
-  // Initialize WebSocket connection for secondary instances too
+
+  // Still initialize the web socket connection if there's an owner
   if (owner !== null) {
     initializeWebSocketConnection(wsConfig);
   }
 }
 
+// Initialize a monitoring/dash system
 initializeMonitoring(
   messageForHeader,
   executionClient,
@@ -389,11 +434,23 @@ initializeMonitoring(
   runsClient
 );
 
+// Periodically configure additional bootnodes or peer addresses
 let bgExecutionPeers = [];
+let bgConsensusPeers = [];
 
+/**
+ * Re-fetch and configure custom bootnode addresses in the background
+ * after some delay (gives time for the nodes to start up).
+ */
 setTimeout(async () => {
+  // Execution side
   bgExecutionPeers = await fetchBGExecutionPeers();
   await configureBGExecutionPeers(bgExecutionPeers);
+
+  // Consensus side
+  bgConsensusPeers = await fetchBGConsensusPeers();
+  await configureBGConsensusPeers(consensusClient);
 }, 10000);
 
+// Export these arrays if needed elsewhere
 export { bgExecutionPeers, bgConsensusPeers };

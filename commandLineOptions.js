@@ -23,7 +23,7 @@ debugToFile(
 );
 
 /// Set default command line option values
-let executionClient = "reth";
+let executionClient = "nethermind";
 let executionType = "full";
 let consensusClient = "lighthouse";
 let executionPeerPort = 30303;
@@ -39,9 +39,9 @@ const optionsFilePath = join(installDir, "options.json");
 function showHelp() {
   console.log("");
   console.log(
-    "  -e, --executionclient <client>            Specify the execution client ('reth' or 'geth')"
+    "  -e, --executionclient <client>            Specify the execution client ('reth', 'geth', or 'nethermind')"
   );
-  console.log("                                            Default: reth\n");
+  console.log("                                            Default: nethermind\n");
   console.log(
     "  -c, --consensusclient <client>            Specify the consensus client ('lighthouse' or 'prysm')"
   );
@@ -196,9 +196,13 @@ if (!optionsLoaded) {
 
   if (argv.executionclient) {
     executionClient = argv.executionclient;
-    if (executionClient !== "reth" && executionClient !== "geth") {
+    if (
+      executionClient !== "reth" &&
+      executionClient !== "geth" &&
+      executionClient !== "nethermind"
+    ) {
       console.log(
-        "Invalid option for --executionclient (-e). Use 'reth' or 'geth'."
+        "Invalid option for --executionclient (-e). Use 'reth', 'geth', or 'nethermind'."
       );
       process.exit(1);
     }
