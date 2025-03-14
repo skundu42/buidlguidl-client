@@ -27,39 +27,32 @@ let dataDir = argv["data-dir"] || path.join(os.homedir(), "nethermind_data");
 const jwtPath = path.join(installDir, "ethereum_clients", "jwt", "jwt.hex");
 
 // Determine the Nethermind command.
-// For both macOS and Linux, we first check if "nethermind" is available in the PATH.
-// This accommodates installations via Homebrew (macOS) or APT (Linux).
 const platform = os.platform();
 let nethermindCommand;
-if (platform === "darwin" || platform === "linux") {
-  try {
-    execSync("command -v nethermind", { stdio: "ignore" });
-    nethermindCommand = "nethermind";
-  } catch (err) {
-    // Fallback to the locally installed binary.
-    nethermindCommand = path.join(
-      installDir,
-      "ethereum_clients",
-      "nethermind",
-      "Nethermind.Runner"
-    );
-  }
-} else if (platform === "win32") {
+try {
+  // Check if 'nethermind' is available in PATH.
+  execSync("command -v nethermind", { stdio: "ignore" });
+  nethermindCommand = "nethermind";
+  debugToFile("Detected 'nethermind' in PATH.");
+} catch (err) {
+  // Fallback to the locally installed binary.
   nethermindCommand = path.join(
     installDir,
     "ethereum_clients",
     "nethermind",
-    "Nethermind.Runner.exe"
+    "Nethermind.Runner"
   );
+  if (!fs.existsSync(nethermindCommand)) {
+    console.error("Nethermind client not found. Please ensure it is installed.");
+    process.exit(1);
+  }
 }
 
-// Ensure the logs directory exists.
 const logsDir = path.join(installDir, "ethereum_clients", "nethermind", "logs");
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }
 
-// Create a log file for Nethermind output.
 const logFilePath = path.join(
   logsDir,
   `nethermind_${getFormattedDateTime()}.log`
@@ -67,11 +60,9 @@ const logFilePath = path.join(
 const logStream = fs.createWriteStream(logFilePath, { flags: "a" });
 
 // Determine the configuration to use.
-// For an archive node, use "mainnet_archive". Otherwise, default to "mainnet".
 const config = executionType === "archive" ? "mainnet_archive" : "mainnet";
 
 // Build the argument list for running Nethermind.
-// (Additional options can be adjusted as needed.)
 const args = [
   "-c", config,
   "--data-dir", dataDir,
@@ -96,7 +87,6 @@ const execution = pty.spawn(nethermindCommand, args, {
   env: { ...process.env, INSTALL_DIR: installDir },
 });
 
-// Pipe the output (stdout/stderr) to the log file and optionally to a parent process.
 execution.on("data", (data) => {
   const cleanData = stripAnsiCodes(data);
   logStream.write(cleanData);
@@ -105,13 +95,11 @@ execution.on("data", (data) => {
   }
 });
 
-// When the Nethermind process exits, close the log stream.
 execution.on("exit", (code) => {
   logStream.end();
   debugToFile(`Nethermind exited with code: ${code}`);
 });
 
-// Handle errors from the process.
 execution.on("error", (err) => {
   const errorMessage = `Error: ${err.message}`;
   logStream.write(errorMessage);

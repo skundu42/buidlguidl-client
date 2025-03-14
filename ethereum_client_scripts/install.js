@@ -8,7 +8,7 @@ import { installDir } from "../commandLineOptions.js";
 export const latestGethVer = "1.14.12";
 export const latestRethVer = "1.0.0";
 export const latestLighthouseVer = "6.0.0";
-export const latestNethermindVer = "1.30.0";
+export const latestNethermindVer = "1.31.3";
 
 /**
  * Download/install a client if it is not present, for macOS or Linux.
@@ -44,19 +44,25 @@ export function installMacLinuxClient(clientName, platform) {
       if (!fs.existsSync(path.join(nethermindDir, "logs"))) fs.mkdirSync(path.join(nethermindDir, "logs"), { recursive: true });
       if (!fs.existsSync(path.join(nethermindDir, "database"))) fs.mkdirSync(path.join(nethermindDir, "database"), { recursive: true });
     } else if (platform === "linux") {
+      // Check if Nethermind is already installed via PATH
       try {
-        execSync("command -v apt-get", { stdio: "ignore" });
-        console.log("\nInstalling Nethermind via package manager on Linux.");
-        console.log("Adding Nethermind repository...");
-        execSync("sudo add-apt-repository -y ppa:nethermindeth/nethermind", { stdio: "inherit" });
-        console.log("Updating package lists...");
-        execSync("sudo apt-get update", { stdio: "inherit" });
-        console.log("Installing Nethermind via APT...");
-        execSync("sudo apt-get install -y nethermind", { stdio: "inherit" });
-        console.log("Nethermind installation via package manager complete.");
-      } catch (pmErr) {
-        console.error("Error installing Nethermind via package manager:", pmErr.message);
-        return;
+        execSync("command -v nethermind", { stdio: "ignore" });
+        console.log("Nethermind is already installed (detected via PATH).");
+      } catch (err) {
+        try {
+          execSync("command -v apt-get", { stdio: "ignore" });
+          console.log("\nInstalling Nethermind via package manager on Linux.");
+          console.log("Adding Nethermind repository...");
+          execSync("sudo add-apt-repository -y ppa:nethermindeth/nethermind", { stdio: "inherit" });
+          console.log("Updating package lists...");
+          execSync("sudo apt-get update", { stdio: "inherit" });
+          console.log("Installing Nethermind via APT...");
+          execSync("sudo apt-get install -y nethermind", { stdio: "inherit" });
+          console.log("Nethermind installation via package manager complete.");
+        } catch (pmErr) {
+          console.error("Error installing Nethermind via package manager:", pmErr.message);
+          return;
+        }
       }
     }
     return;
@@ -174,9 +180,19 @@ export function getVersionNumber(client) {
 
   if (["darwin", "linux"].includes(platform)) {
     if (client === "nethermind") {
-      clientCommand = platform === "darwin"
-        ? "nethermind"
-        : path.join(installDir, "ethereum_clients", "nethermind", "Nethermind.Runner");
+      if (platform === "darwin") {
+        clientCommand = "nethermind";
+      } else if (platform === "linux") {
+        try {
+          // If Nethermind is installed via APT, the command will be in the PATH.
+          execSync("command -v nethermind", { stdio: "ignore" });
+          console.log("Nethermind found in PATH, using system command.");
+          clientCommand = "nethermind";
+        } catch (err) {
+          console.log("Nethermind not found in PATH, falling back to local installation path.");
+          clientCommand = path.join(installDir, "ethereum_clients", "nethermind", "Nethermind.Runner");
+        }
+      }
     } else if (client === "prysm") {
       clientCommand = path.join(installDir, "ethereum_clients", client, "prysm.sh");
     } else {
