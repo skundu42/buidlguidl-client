@@ -123,6 +123,7 @@ export function installMacLinuxClient(clientName, platform) {
       });
     }
   } else if (clientName === "nethermind") {
+    // For Nethermind, always use the package manager method.
     if (platform === "darwin") {
       // Use Homebrew for Nethermind installation on macOS.
       try {
@@ -153,79 +154,23 @@ export function installMacLinuxClient(clientName, platform) {
         fs.mkdirSync(path.join(nethermindDir, "database"), { recursive: true });
       }
     } else {
-      // Linux: use existing ZIP download/release build logic.
-      const nethermindRunnerPath = path.join(clientDir, "Nethermind.Runner");
-      if (!fs.existsSync(nethermindRunnerPath)) {
-        console.log("\nInstalling Nethermind (release build) on Linux.");
-        if (!fs.existsSync(clientDir)) {
-          console.log(`Creating '${clientDir}'`);
-          fs.mkdirSync(path.join(clientDir, "database"), { recursive: true });
-          fs.mkdirSync(path.join(clientDir, "logs"), { recursive: true });
-        }
-
-        const fileNameLinux = configs[platform]?.[arch]?.["nethermind"];
-        const downloadUrl = `https://github.com/NethermindEth/nethermind/releases/download/${latestNethermindVer}/${fileNameLinux}.zip`;
-        console.log(`Downloading Nethermind from ${downloadUrl}.`);
-
-        try {
-          execSync(`cd "${clientDir}" && curl -L -O -# ${downloadUrl}`, {
-            stdio: "inherit",
-          });
-        } catch (error) {
-          console.error("Error downloading Nethermind:", error.message);
-        }
-
-        console.log("Uncompressing Nethermind zip...");
-        const zipFile = fs
-          .readdirSync(clientDir)
-          .find((f) => f.endsWith(".zip"));
-        if (!zipFile) {
-          console.error("Unable to find downloaded ZIP file for Nethermind");
-        } else {
-          try {
-            execSync(`cd "${clientDir}" && unzip -o "${zipFile}"`, {
-              stdio: "inherit",
-            });
-          } catch (errUnzip) {
-            console.error("Error unzipping Nethermind:", errUnzip.message);
-            console.error(`Attempting to use 7z to extract ${zipFile}`);
-            execSync(`cd "${clientDir}" && 7z x "${zipFile}"`, {
-              stdio: "inherit",
-            });
-          }
-
-          console.log(`Cleaning up Nethermind directory (removing ${zipFile}).`);
-          execSync(`cd "${clientDir}" && rm "${zipFile}"`, {
-            stdio: "inherit",
-          });
-
-          // Move the Nethermind.Runner binary up from its subfolder, if needed.
-          if (!fs.existsSync(nethermindRunnerPath)) {
-            const subdir = fs
-              .readdirSync(clientDir, { withFileTypes: true })
-              .find((d) => d.isDirectory() && d.name.startsWith("nethermind-"));
-            if (subdir) {
-              const subDirPath = path.join(clientDir, subdir.name);
-              const runnerInSubdir = path.join(subDirPath, "Nethermind.Runner");
-              if (fs.existsSync(runnerInSubdir)) {
-                console.log(`Moving Nethermind.Runner up from subfolder: ${subdir.name}`);
-                fs.renameSync(runnerInSubdir, nethermindRunnerPath);
-              }
-            }
-          }
-
-          if (fs.existsSync(nethermindRunnerPath)) {
-            try {
-              execSync(`chmod +x "${nethermindRunnerPath}"`, {
-                stdio: "inherit",
-              });
-            } catch (chmodErr) {
-              console.error("Failed to chmod +x Nethermind.Runner:", chmodErr);
-            }
-          }
-        }
-      } else {
-        console.log("Nethermind is already installed.");
+      // Linux: Always use package manager (APT) for Nethermind.
+      try {
+        // Ensure apt-get is available.
+        execSync("command -v apt-get", { stdio: "ignore" });
+        console.log("\nInstalling Nethermind via package manager on Linux.");
+        console.log("Adding Nethermind repository...");
+        execSync("sudo add-apt-repository -y ppa:nethermindeth/nethermind", {
+          stdio: "inherit",
+        });
+        console.log("Updating package lists...");
+        execSync("sudo apt-get update", { stdio: "inherit" });
+        console.log("Installing Nethermind via APT...");
+        execSync("sudo apt-get install -y nethermind", { stdio: "inherit" });
+        console.log("Nethermind installation via package manager complete.");
+      } catch (pmErr) {
+        console.error("Error installing Nethermind via package manager:", pmErr.message);
+        return;
       }
     }
   } else {
@@ -260,7 +205,10 @@ export function getVersionNumber(client) {
   if (["darwin", "linux"].includes(platform)) {
     if (client === "nethermind") {
       // For macOS, assume the nethermind binary is available via PATH.
-      clientCommand = platform === "darwin" ? "nethermind" : path.join(installDir, "ethereum_clients", "nethermind", "Nethermind.Runner");
+      clientCommand =
+        platform === "darwin"
+          ? "nethermind"
+          : path.join(installDir, "ethereum_clients", "nethermind", "Nethermind.Runner");
     } else if (client === "prysm") {
       clientCommand = path.join(installDir, "ethereum_clients", client, "prysm.sh");
     } else {
