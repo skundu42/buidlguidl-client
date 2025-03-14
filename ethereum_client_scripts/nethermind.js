@@ -27,13 +27,12 @@ let dataDir = argv["data-dir"] || path.join(os.homedir(), "nethermind_data");
 const jwtPath = path.join(installDir, "ethereum_clients", "jwt", "jwt.hex");
 
 // Determine the Nethermind command.
-// On macOS (assumed installed via Homebrew), use "nethermind" from PATH.
-// On Linux and Windows, use the locally installed binary.
+// For both macOS and Linux, we first check if "nethermind" is available in the PATH.
+// This accommodates installations via Homebrew (macOS) or APT (Linux).
 const platform = os.platform();
 let nethermindCommand;
-if (platform === "darwin") {
+if (platform === "darwin" || platform === "linux") {
   try {
-    // Check if "nethermind" is available in the PATH.
     execSync("command -v nethermind", { stdio: "ignore" });
     nethermindCommand = "nethermind";
   } catch (err) {
@@ -45,13 +44,6 @@ if (platform === "darwin") {
       "Nethermind.Runner"
     );
   }
-} else if (platform === "linux") {
-  nethermindCommand = path.join(
-    installDir,
-    "ethereum_clients",
-    "nethermind",
-    "Nethermind.Runner"
-  );
 } else if (platform === "win32") {
   nethermindCommand = path.join(
     installDir,
@@ -61,13 +53,15 @@ if (platform === "darwin") {
   );
 }
 
+// Ensure the logs directory exists.
+const logsDir = path.join(installDir, "ethereum_clients", "nethermind", "logs");
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+
 // Create a log file for Nethermind output.
-// The log directory is expected under the local Nethermind install directory.
 const logFilePath = path.join(
-  installDir,
-  "ethereum_clients",
-  "nethermind",
-  "logs",
+  logsDir,
   `nethermind_${getFormattedDateTime()}.log`
 );
 const logStream = fs.createWriteStream(logFilePath, { flags: "a" });
