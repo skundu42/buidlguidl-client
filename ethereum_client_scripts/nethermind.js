@@ -60,7 +60,7 @@ const logFilePath = path.join(
 const logStream = fs.createWriteStream(logFilePath, { flags: "a" });
 
 // Determine the configuration to use.
-const config = executionType === "archive" ? "mainnet_archive" : "mainnet";
+const config = executionType === "archive" ? "gnosis_archive" : "gnosis";
 
 // Build the argument list for running Nethermind.
 const args = [
