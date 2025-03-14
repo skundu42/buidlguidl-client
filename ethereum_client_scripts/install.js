@@ -25,8 +25,6 @@ export function installMacLinuxClient(clientName, platform) {
     "1.14.12": "293a300d",
   };
 
-  // Mappings from client/platform/arch to the specific release file.
-  // For macOS Nethermind we use Homebrew so no fileName is needed.
   const configs = {
     darwin: {
       x64: {
@@ -39,7 +37,6 @@ export function installMacLinuxClient(clientName, platform) {
       arm64: {
         geth: `geth-darwin-arm64-${latestGethVer}-${gethHash[latestGethVer]}`,
         reth: `reth-v${latestRethVer}-aarch64-apple-darwin`,
-        // Lighthouse doesn't offer a separate arm64 build for macOS in official releases
         lighthouse: `lighthouse-v${latestLighthouseVer}-x86_64-apple-darwin`,
         prysm: "prysm.sh",
         nethermind: null,

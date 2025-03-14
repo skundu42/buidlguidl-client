@@ -11,6 +11,7 @@ import { mainnetClient, localClient, isSyncing } from "./viemClients.js";
 import { exec } from "child_process";
 import { populateRethStageGauge } from "./rethStageGauge.js";
 import { populateGethStageGauge } from "./gethStageGauge.js";
+import { populateNethermindStageGauge } from "./nethermindStageGauge.js";
 import { checkIn } from "../web_socket_connection/webSocketConnection.js";
 import fetch from "node-fetch";
 import { getDiskUsage } from "../getSystemStats.js";
@@ -24,6 +25,12 @@ let gethStageProgress = [
   progress.headerDlProgress,
   progress.chainDlProgress,
   progress.stateDlProgress,
+];
+
+let nethermindStageProgress = [
+  progress.nethermindHeaderDlProgress || 0,
+  progress.nethermindChainDlProgress || 0,
+  progress.nethermindStateDlProgress || 0,
 ];
 
 function stripAnsiCodes(input) {
@@ -77,6 +84,49 @@ function saveChainDlProgress(line) {
   }
 }
 
+// --- Nethermind-specific log parsing functions ---
+
+function saveNethermindHeaderDlProgress(line) {
+  if (line.includes("Downloading headers")) {
+    // Example log: "Downloading headers: downloaded=12345, remaining=67890"
+    const match = line.match(/downloaded=(\d+), remaining=(\d+)/);
+    if (match) {
+      const downloaded = parseInt(match[1], 10);
+      const remaining = parseInt(match[2], 10);
+      const progressValue = downloaded / (downloaded + remaining);
+      nethermindStageProgress[0] = progressValue;
+      progress.nethermindHeaderDlProgress = progressValue;
+      saveProgress(progress);
+    }
+  }
+}
+
+function saveNethermindChainDlProgress(line) {
+  if (line.includes("Syncing chain")) {
+    // Example log: "Syncing chain: 45.67%"
+    const match = line.match(/Syncing chain:\s+([\d.]+)%/);
+    if (match) {
+      const progressValue = parseFloat(match[1]) / 100;
+      nethermindStageProgress[1] = progressValue;
+      progress.nethermindChainDlProgress = progressValue;
+      saveProgress(progress);
+    }
+  }
+}
+
+function saveNethermindStateDlProgress(line) {
+  if (line.includes("Syncing state")) {
+    // Example log: "Syncing state: 89.01%"
+    const match = line.match(/Syncing state:\s+([\d.]+)%/);
+    if (match) {
+      const progressValue = parseFloat(match[1]) / 100;
+      nethermindStageProgress[2] = progressValue;
+      progress.nethermindStateDlProgress = progressValue;
+      saveProgress(progress);
+    }
+  }
+}
+
 let globalLine = "";
 
 export function setupLogStreaming(
@@ -84,7 +134,9 @@ export function setupLogStreaming(
   logFilePath,
   log,
   screen,
-  gethStageGauge
+  gethStageGauge,
+  rethStageGauge,
+  nethermindStageGauge // added parameter for Nethermind gauge
 ) {
   let logBuffer = [];
   let lastSize = 0;
@@ -137,18 +189,30 @@ export function setupLogStreaming(
 
           log.setContent(logBuffer.join("\n"));
 
-          if (client == "geth") {
+          if (client === "geth") {
             if (screen.children.includes(gethStageGauge)) {
               populateGethStageGauge(gethStageProgress);
             }
-
             saveHeaderDlProgress(line);
             saveStateDlProgress(line);
             saveChainDlProgress(line);
+          } else if (client === "reth") {
+            // For reth, metrics are updated via parseAndPopulateRethMetrics()
+          } else if (client === "nethermind") {
+            if (screen.children.includes(nethermindStageGauge)) {
+              populateNethermindStageGauge(nethermindStageProgress);
+            }
+            saveNethermindHeaderDlProgress(line);
+            saveNethermindChainDlProgress(line);
+            saveNethermindStateDlProgress(line);
           }
 
-          // Check for new block
-          if (client == "geth" || client == "reth") {
+          // Check for new block for all clients
+          if (
+            client === "geth" ||
+            client === "reth" ||
+            client === "nethermind"
+          ) {
             const blockNumberMatch = line.match(/block=(\d+)/);
             if (blockNumberMatch) {
               const currentBlockNumber = parseInt(blockNumberMatch[1], 10);
@@ -257,13 +321,9 @@ async function parseAndPopulateRethMetrics() {
       ) {
         const toBlock = parseInt(globalLine.match(/to_block=(\d+)/)[1], 10);
 
-        // debugToFile(`toBlock: ${toBlock}`);
-
         if (toBlock > largestToBlock) {
           largestToBlock = toBlock;
         }
-
-        // debugToFile(`largestToBlock: ${largestToBlock}`);
 
         headersPercent = (largestToBlock - toBlock) / largestToBlock;
       }
@@ -468,10 +528,7 @@ async function parseAndPopulateRethMetrics() {
       indexAccountHistoryProcessedMatch[1],
       10
     );
-    const indexAccountHistoryTotal = parseInt(
-      indexAccountHistoryTotalMatch[1],
-      10
-    );
+    const indexAccountHistoryTotal = parseInt(indexAccountHistoryTotalMatch[1], 10);
 
     if (indexAccountHistoryProcessed > 0) {
       indexAccountHistoryPercent =
@@ -531,8 +588,6 @@ export async function showHideRethWidgets(
 ) {
   try {
     const syncingStatus = await isSyncing();
-
-    // debugToFile(`syncingStatus: ${JSON.stringify(syncingStatus, null, 2)}`);
 
     const allStagesComplete = checkAllStagesComplete(stagePercentages);
 
@@ -597,6 +652,41 @@ export async function showHideGethWidgets(
   }
 }
 
+export async function showHideNethermindWidgets(
+  screen,
+  nethermindStageGauge,
+  chainInfoBox,
+  rpcInfoBox
+) {
+  try {
+    const syncingStatus = await isSyncing();
+
+    if (syncingStatus) {
+      if (!screen.children.includes(nethermindStageGauge)) {
+        screen.append(nethermindStageGauge);
+      }
+      if (screen.children.includes(chainInfoBox)) {
+        screen.remove(chainInfoBox);
+      }
+      if (screen.children.includes(rpcInfoBox)) {
+        screen.remove(rpcInfoBox);
+      }
+    } else {
+      if (screen.children.includes(nethermindStageGauge)) {
+        screen.remove(nethermindStageGauge);
+      }
+      if (!screen.children.includes(chainInfoBox)) {
+        screen.append(chainInfoBox);
+      }
+      if (!screen.children.includes(rpcInfoBox) && owner) {
+        screen.append(rpcInfoBox);
+      }
+    }
+  } catch (error) {
+    debugToFile(`showHideNethermindWidgets(): ${error}`);
+  }
+}
+
 export async function synchronizeAndUpdateWidgets(installDir) {
   try {
     // Check for network connectivity
@@ -614,7 +704,7 @@ export async function synchronizeAndUpdateWidgets(installDir) {
     const blockNumber = await localClient.getBlockNumber();
     const latestBlock = await mainnetClient.getBlockNumber();
 
-    if (executionClient == "geth") {
+    if (executionClient === "geth") {
       if (syncingStatus) {
         const currentBlock = parseInt(syncingStatus.currentBlock, 16);
         const highestBlock = parseInt(syncingStatus.highestBlock, 16);
@@ -634,7 +724,7 @@ export async function synchronizeAndUpdateWidgets(installDir) {
           statusMessage = `CATCHING UP TO HEAD\nLocal Block:   ${blockNumber.toLocaleString()}\nMainnet Block: ${latestBlock.toLocaleString()}`;
         }
       }
-    } else if (executionClient == "reth") {
+    } else if (executionClient === "reth") {
       const allStagesComplete = checkAllStagesComplete(stagePercentages);
       const allStagesZero = Object.values(stagePercentages).every(
         (percent) => percent === 0
@@ -644,6 +734,20 @@ export async function synchronizeAndUpdateWidgets(installDir) {
         statusMessage = `SYNC IN PROGRESS`;
         await parseAndPopulateRethMetrics();
       } else if (allStagesComplete) {
+        if (
+          blockNumber >= latestBlock ||
+          blockNumber === latestBlock - BigInt(1)
+        ) {
+          statusMessage = `FOLLOWING CHAIN HEAD\nCurrent Block: ${blockNumber.toLocaleString()}`;
+        } else {
+          statusMessage = `CATCHING UP TO HEAD\nLocal Block:   ${blockNumber.toLocaleString()}\nMainnet Block: ${latestBlock.toLocaleString()}`;
+        }
+      }
+    } else if (executionClient === "nethermind") {
+      // For Nethermind, use similar syncing logic as geth
+      if (syncingStatus) {
+        statusMessage = `SYNC IN PROGRESS (Nethermind)`;
+      } else {
         if (
           blockNumber >= latestBlock ||
           blockNumber === latestBlock - BigInt(1)

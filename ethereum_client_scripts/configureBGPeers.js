@@ -39,8 +39,8 @@ export async function configureBGExecutionPeers(bgPeers) {
 
     for (const enode of bgPeers) {
       if (consensusClient.toLowerCase() === "nethermind") {
-        // For Nethermind, only use admin_addPeer since admin_addTrustedPeer is not supported.
-        const curlCommandAddPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"admin_addPeer","params":["${enode}"]}' http://localhost:8545`;
+        // For Nethermind, use nethermind_addPeer as the appropriate function call.
+        const curlCommandAddPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"nethermind_addPeer","params":["${enode}"]}' http://localhost:8545`;
 
         exec(curlCommandAddPeer, (error, stdout, stderr) => {
           if (error) {
@@ -146,13 +146,29 @@ export async function configureBGConsensusPeers() {
 
     const result = peerAddresses.join(",");
 
-    // For Nethermind, if additional consensus peer configuration via JSON-RPC is needed,
-    // add the corresponding method call here.
-    // For example:
-    // if (consensusClient.toLowerCase() === "nethermind") {
-    //   const curlCommandConsensusPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"nethermind_addConsensusPeer","params":["${result}"]}' http://localhost:8545`;
-    //   // Execute this command similarly to the execution peers above.
-    // }
+    // For Nethermind, execute the additional consensus peer configuration via JSON-RPC.
+    if (consensusClient.toLowerCase() === "nethermind") {
+      const { exec } = await import("child_process");
+      const curlCommandConsensusPeer = `curl -s -X POST -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","id":1,"method":"nethermind_addConsensusPeer","params":["${result}"]}' http://localhost:8545`;
+      
+      exec(curlCommandConsensusPeer, (error, stdout, stderr) => {
+        if (error) {
+          debugToFile(
+            `configureBGConsensusPeers() [Nethermind]: Error executing curl command for consensus peer: ${error}`
+          );
+          return;
+        }
+        if (stderr) {
+          debugToFile(
+            `configureBGConsensusPeers() [Nethermind]: Curl command stderr for consensus peer: ${stderr}`
+          );
+          return;
+        }
+        debugToFile(
+          `configureBGConsensusPeers() [Nethermind]: Curl command stdout for consensus peer: ${stdout}`
+        );
+      });
+    }
 
     return result;
   } catch (error) {
